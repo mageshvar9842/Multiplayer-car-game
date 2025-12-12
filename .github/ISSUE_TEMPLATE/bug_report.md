@@ -1,66 +1,66 @@
-**---**
+---
 
-**name: "Bug Report"**
+name: "Bug Report"
 
-**about: "Report a bug in the PatchFest Racer project."**
+about: "Report a bug in the PatchFest Racer project."
 
-**title: "\[BUG] "**
+title: "\[BUG] "
 
-**labels: \["bug"]**
+labels: \["bug"]
 
-**---**
-
-
-
-**## Description**
-
-**Explain the bug clearly and concisely.**
+---
 
 
 
-**## Steps to Reproduce**
+## Description
 
-**1. Step one**  
-
-**2. Step two**  
-
-**3. Step three**  
+Explain the bug clearly and concisely.
 
 
 
-**## Expected Behavior**
+## Steps to Reproduce
 
-**What did you expect to happen?**
+1. Step one
 
+2. Step two
 
-
-**## Actual Behavior**
-
-**What actually happened?**
+3. Step three
 
 
 
-**## Screenshots / Logs**
+## Expected Behavior
 
-**Add screenshots, terminal logs, or Python errors.**
-
-
-
-**## Environment Only if necessary(fill all that apply)**
-
-**- OS:**  
-
-**- Python Version:**  
-
-**- Client or Server:**  
-
-**- Steps you performed:**  
+What did you expect to happen?
 
 
 
-**## Additional Context**
+## Actual Behavior
 
-**Anything else developers should know.**
+What actually happened?
+
+
+
+## Screenshots / Logs
+
+Add screenshots, terminal logs, or Python errors.
+
+
+
+## Environment Only if necessary (fill all that apply)
+
+- OS:
+
+- Python Version:
+
+- Client or Server:
+
+- Steps you performed:
+
+
+
+## Additional Context
+
+Anything else developers should know.
 
 
 
