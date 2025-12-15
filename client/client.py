@@ -3,7 +3,6 @@ import threading
 import json
 import pygame
 import time
-
 DISCOVERY_PORT = 50001
 TCP_PORT = 50000
 
