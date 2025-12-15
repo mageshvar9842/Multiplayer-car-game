@@ -1,106 +1,120 @@
 import socket
 import threading
 import json
-import pygame
 import time
+import random
 
-DISCOVERY_PORT = 50001
 TCP_PORT = 50000
+DISCOVERY_PORT = 50001
 
-# Discover rooms
-def discover_rooms(timeout=1.5):
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-    sock.settimeout(0.4)
+def room_code():
+    return ''.join(random.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for _ in range(4))
 
-    found = []
-    start = time.time()
-
-    while time.time() - start < timeout:
-        sock.sendto(b"DISCOVER_ROOM", ("<broadcast>", DISCOVERY_PORT))
-        try:
-            data, addr = sock.recvfrom(1024)
-            info = json.loads(data.decode())
-        # FIX 1: Check for duplicates before adding
-        if not any(r.get("room_code") == info.get("room_code") for r in found):
-            found.append(info)
-        except:
-            pass
-
-    return found
-
-class Client:
+class RoomServer:
     def __init__(self):
-        self.sock = None
-        self.players = []
+        self.code = room_code()
+        self.clients = {}  # conn -> {"id": str, "x": int, "y": int}
         self.running = True
+        self.road_scroll = 0.0  # Track road scroll position
+        self.scroll_speed = 3.0
 
-    def connect(self, host):
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.sock.connect((host, TCP_PORT))
-        threading.Thread(target=self.recv_loop, daemon=True).start()
+    def start(self):
+        print(f"[SERVER] Room created. Code: {self.code}")
+        threading.Thread(target=self.discovery_loop, daemon=True).start()
+        threading.Thread(target=self.tcp_loop, daemon=True).start()
+        self.game_loop()
 
-    def recv_loop(self):
+    # UDP discovery
+    def discovery_loop(self):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind(("", DISCOVERY_PORT))
+
+        while self.running:
+            try:
+                msg, addr = sock.recvfrom(1024)
+                if msg.decode() == "DISCOVER_ROOM":
+                    reply = {
+                        "type": "room",
+                        "room_code": self.code,
+                        "host": socket.gethostbyname(socket.gethostname()),
+                        "tcp_port": TCP_PORT,
+                    }
+                    sock.sendto(json.dumps(reply).encode(), addr)
+            except:
+                pass
+
+    # TCP accept
+    def tcp_loop(self):
+        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        srv.bind(("", TCP_PORT))
+        srv.listen(8)
+
+        while self.running:
+            conn, addr = srv.accept()
+            pid = f"P{len(self.clients)+1}"
+            self.clients[conn] = {"id": pid, "x": 500, "y": 350}
+
+            welcome_msg = {
+                "type": "welcome", 
+                "id": pid,
+                "road_scroll": self.road_scroll
+            }
+            conn.sendall(json.dumps(welcome_msg).encode()+b"\n")
+            threading.Thread(target=self.client_receiver, args=(conn,), daemon=True).start()
+
+    # TCP receive loop
+    def client_receiver(self, conn):
         buf = b""
         while self.running:
             try:
-                data = self.sock.recv(4096)
+                data = conn.recv(4096)
                 if not data:
                     break
                 buf += data
                 while b"\n" in buf:
                     line, buf = buf.split(b"\n", 1)
                     msg = json.loads(line.decode())
-                    if msg["type"] == "welcome":
-                        self.id = msg["id"]
-                    elif msg["type"] == "state":
-                        self.players = msg["players"]
+
+                    # update only x,y
+                    player = self.clients[conn]
+                    player["x"] += msg.get("dx", 0)
+                    player["y"] += msg.get("dy", 0)
+                    
+                    # Keep players within bounds
+                    player["x"] = max(0, min(960, player["x"]))
+                    player["y"] = max(0, min(660, player["y"]))
+
             except:
                 break
 
-    def send_input(self, dx, dy):
-        msg = json.dumps({"dx": dx, "dy": dy}) + "\n"
-        try:
-            self.sock.sendall(msg.encode())
-        except:
-            pass
+        del self.clients[conn]
+        conn.close()
 
-# ---------------------- PYGAME LOOP ----------------------
-pygame.init()
-screen = pygame.display.set_mode((1000, 700))
-clock = pygame.time.Clock()
+    # Broadcast loop
+    def game_loop(self):
+        while self.running:
+            # Update road scroll
+            self.road_scroll += self.scroll_speed
+            if self.road_scroll >= 70:  # lane_height + lane_gap
+                self.road_scroll = 0.0
+            
+            state = {
+                "type": "state",
+                "players": list(self.clients.values()),
+                "road_scroll": self.road_scroll
+            }
+            data = json.dumps(state).encode() + b"\n"
 
-client = Client()
+            for conn in list(self.clients.keys()):
+                try:
+                    conn.sendall(data)
+                except:
+                    del self.clients[conn]
+                    conn.close()
 
-rooms = discover_rooms()
-if rooms:
-    print("Found rooms:", rooms)
-    client.connect(rooms[0]["host"])   # auto-join first found
-else:
-    print("No rooms found.")
+            time.sleep(1/60)  # 60 FPS server tick
 
-running = True
-while running:
-    dx = dy = 0
-    for e in pygame.event.get():
-        if e.type == pygame.QUIT:
-            running = False
-
-    keys = pygame.key.get_pressed()
-    if keys[pygame.K_LEFT]: dx = -5
-    if keys[pygame.K_RIGHT]: dx = 5
-    if keys[pygame.K_UP]: dy = -5
-    if keys[pygame.K_DOWN]: dy = 5
-
-    client.send_input(dx, dy)
-
-    # draw
-    screen.fill((30, 30, 30))
-    for p in client.players:
-        pygame.draw.rect(screen, (0,255,0), (p["x"], p["y"], 40, 40))
-
-    pygame.display.flip()
-    clock.tick(60)
-
-pygame.quit()
-client.running = False
+if __name__ == "__main__":
+    RoomServer().start()
