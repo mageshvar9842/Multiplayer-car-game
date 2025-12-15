@@ -21,6 +21,8 @@ def discover_rooms(timeout=1.5):
         try:
             data, addr = sock.recvfrom(1024)
             info = json.loads(data.decode())
+        # FIX 1: Check for duplicates before adding
+        if not any(r.get("room_code") == info.get("room_code") for r in found):
             found.append(info)
         except:
             pass
