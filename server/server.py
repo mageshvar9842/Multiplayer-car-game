@@ -3,7 +3,6 @@ import threading
 import json
 import time
 import random
-import string
 
 TCP_PORT = 50000
 DISCOVERY_PORT = 50001
@@ -14,7 +13,8 @@ def room_code():
 class RoomServer:
     def __init__(self):
         self.code = room_code()
-        self.clients = {}  # conn -> {"id": str, "x": int, "y": int}
+        self.clients = {}
+        self.clients_lock = threading.Lock()
         self.running = True
 
     def start(self):
@@ -23,12 +23,10 @@ class RoomServer:
         threading.Thread(target=self.tcp_loop, daemon=True).start()
         self.game_loop()
 
-    # UDP discovery
     def discovery_loop(self):
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind(("", DISCOVERY_PORT))
-
         while self.running:
             try:
                 msg, addr = sock.recvfrom(1024)
@@ -40,25 +38,26 @@ class RoomServer:
                         "tcp_port": TCP_PORT,
                     }
                     sock.sendto(json.dumps(reply).encode(), addr)
-            except:
+            except Exception:
                 pass
 
-    # TCP accept
     def tcp_loop(self):
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         srv.bind(("", TCP_PORT))
         srv.listen(8)
-
         while self.running:
-            conn, addr = srv.accept()
-            pid = f"P{len(self.clients)+1}"
-            self.clients[conn] = {"id": pid, "x": 500, "y": 350}
+            try:
+                conn, addr = srv.accept()
+                with self.clients_lock:
+                    pid = f"P{len(self.clients)+1}"
+                    self.clients[conn] = {"id": pid, "x": 500, "y": 350}
+                conn.sendall(json.dumps({"type": "welcome", "id": pid}).encode()+b"\n")
+                threading.Thread(target=self.client_receiver, args=(conn,), daemon=True).start()
+            except Exception:
+                if self.running:
+                    continue
 
-            conn.sendall(json.dumps({"type": "welcome", "id": pid}).encode()+b"\n")
-            threading.Thread(target=self.client_receiver, args=(conn,), daemon=True).start()
-
-    # TCP receive loop
     def client_receiver(self, conn):
         buf = b""
         while self.running:
@@ -70,34 +69,42 @@ class RoomServer:
                 while b"\n" in buf:
                     line, buf = buf.split(b"\n", 1)
                     msg = json.loads(line.decode())
-
-                    # update only x,y
-                    player = self.clients[conn]
-                    player["x"] += msg.get("dx", 0)
-                    player["y"] += msg.get("dy", 0)
-
-            except:
+                    with self.clients_lock:
+                        if conn in self.clients:
+                            player = self.clients[conn]
+                            player["x"] += msg.get("dx", 0)
+                            player["y"] += msg.get("dy", 0)
+            except Exception:
                 break
+        with self.clients_lock:
+            if conn in self.clients:
+                del self.clients[conn]
+        try:
+            conn.close()
+        except Exception:
+            pass
 
-        del self.clients[conn]
-        conn.close()
-
-    # Broadcast loop
     def game_loop(self):
         while self.running:
-            state = {
-                "type": "state",
-                "players": list(self.clients.values())
-            }
-            data = json.dumps(state).encode() + b"\n"
-
-            for conn in list(self.clients.keys()):
-                try:
-                    conn.sendall(data)
-                except:
-                    del self.clients[conn]
-                    conn.close()
-
+            with self.clients_lock:
+                state = {
+                    "type": "state",
+                    "players": list(self.clients.values())
+                }
+                data = json.dumps(state).encode() + b"\n"
+                dead_conns = []
+                for conn in list(self.clients.keys()):
+                    try:
+                        conn.sendall(data)
+                    except Exception:
+                        dead_conns.append(conn)
+                for conn in dead_conns:
+                    if conn in self.clients:
+                        del self.clients[conn]
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
             time.sleep(1/20)
 
 if __name__ == "__main__":
